@@ -22,13 +22,25 @@ fi
 
 echo "✅ PostgreSQL is running"
 
-# Create database
-echo "Creating database 'polyhedron'..."
-createdb polyhedron 2>/dev/null || echo "Database 'polyhedron' already exists"
+# Create database and setup with proper permissions
+echo "Creating database 'polyhedron' and setting up permissions..."
 
-# Run initialization script
-echo "Initializing database schema..."
-sudo -u postgres psql -d polyhedron -f backend/database/init.sql
+# Method 1: Try with current user first
+if createdb polyhedron 2>/dev/null && psql -d polyhedron -f backend/database/setup.sql 2>/dev/null; then
+    echo "✅ Database created successfully with current user"
+else
+    echo "Trying with postgres superuser..."
+    # Method 2: Use postgres superuser
+    sudo -u postgres createdb polyhedron 2>/dev/null || echo "Database 'polyhedron' already exists"
+    sudo -u postgres psql -d polyhedron -f backend/database/setup.sql
+    
+    # Grant permissions to current user
+    sudo -u postgres psql -d polyhedron -c "GRANT ALL PRIVILEGES ON DATABASE polyhedron TO $USER;"
+    sudo -u postgres psql -d polyhedron -c "GRANT ALL ON SCHEMA public TO $USER;"
+    sudo -u postgres psql -d polyhedron -c "GRANT CREATE ON SCHEMA public TO $USER;"
+    sudo -u postgres psql -d polyhedron -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO $USER;"
+    sudo -u postgres psql -d polyhedron -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO $USER;"
+fi
 
 echo "✅ Database setup complete!"
 echo ""
