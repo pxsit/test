@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs-extra';
@@ -11,14 +11,18 @@ import { CreateProblemRequest, UpdateProblemRequest } from '../types';
 
 const router = express.Router();
 
+interface AuthRequest extends Request {
+  userId?: number;
+}
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
+  destination: (req: Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) => {
     const uploadDir = path.join(process.cwd(), 'uploads', 'problems');
     fs.ensureDirSync(uploadDir);
     cb(null, uploadDir);
   },
-  filename: (req, file, cb) => {
+  filename: (req: Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
   }
@@ -27,7 +31,7 @@ const storage = multer.diskStorage({
 const upload = multer({ 
   storage,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
-  fileFilter: (req, file, cb) => {
+  fileFilter: (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
     const allowedTypes = ['.cpp', '.c', '.py', '.java', '.txt', '.in', '.out'];
     const ext = path.extname(file.originalname).toLowerCase();
     if (allowedTypes.includes(ext)) {
@@ -39,7 +43,7 @@ const upload = multer({
 });
 
 // Get all problems for authenticated user
-router.get('/', authenticateToken, async (req: any, res: any, next: any) => {
+router.get('/', authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const result = await pool.query(
       'SELECT id, name, title, time_limit, memory_limit, created_at, updated_at FROM problems WHERE author_id = $1 ORDER BY updated_at DESC',
@@ -53,7 +57,7 @@ router.get('/', authenticateToken, async (req: any, res: any, next: any) => {
 });
 
 // Get specific problem
-router.get('/:id', authenticateToken, async (req: any, res: any, next: any) => {
+router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const problemId = parseInt(req.params.id);
     
@@ -103,7 +107,7 @@ router.post('/', authenticateToken, [
   body('title').isLength({ min: 1, max: 255 }).trim(),
   body('timeLimit').optional().isInt({ min: 100, max: 10000 }),
   body('memoryLimit').optional().isInt({ min: 64, max: 1024 })
-], async (req: any, res: any, next: any) => {
+], async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -130,7 +134,7 @@ router.put('/:id', authenticateToken, [
   body('title').optional().isLength({ min: 1, max: 255 }).trim(),
   body('timeLimit').optional().isInt({ min: 100, max: 10000 }),
   body('memoryLimit').optional().isInt({ min: 64, max: 1024 })
-], async (req: any, res: any, next: any) => {
+], async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -180,7 +184,7 @@ router.put('/:id', authenticateToken, [
 });
 
 // Delete problem
-router.delete('/:id', authenticateToken, async (req: any, res: any, next: any) => {
+router.delete('/:id', authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const problemId = parseInt(req.params.id);
 
@@ -200,7 +204,7 @@ router.delete('/:id', authenticateToken, async (req: any, res: any, next: any) =
 });
 
 // Upload problem files (generator, checker, interactor, solution)
-router.post('/:id/files', authenticateToken, upload.single('file'), async (req: any, res: any, next: any) => {
+router.post('/:id/files', authenticateToken, upload.single('file'), async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const problemId = parseInt(req.params.id);
     const { fileType, language } = req.body;
@@ -233,7 +237,7 @@ router.post('/:id/files', authenticateToken, upload.single('file'), async (req: 
 });
 
 // Export problem package
-router.get('/:id/export', authenticateToken, async (req: any, res: any, next: any) => {
+router.get('/:id/export', authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const problemId = parseInt(req.params.id);
 
@@ -272,10 +276,8 @@ router.get('/:id/export', authenticateToken, async (req: any, res: any, next: an
 
       // Create ZIP archive
       const zipPath = path.join(process.cwd(), 'temp', `${problem.name}.zip`);
-      await createZipArchive(tempDir, zipPath);
-
-      // Send file
-      res.download(zipPath, `${problem.name}.zip`, async (err) => {
+      await createZipArchive(tempDir, zipPath);      // Send file
+      res.download(zipPath, `${problem.name}.zip`, async (err: Error | null) => {
         // Cleanup
         await fs.remove(tempDir);
         await fs.remove(zipPath);

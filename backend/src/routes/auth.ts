@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { body, validationResult } from 'express-validator';
@@ -7,12 +7,11 @@ import { pool } from '../config/database';
 const router = express.Router();
 
 // Register
-router.post('/register', [
-  body('username').isLength({ min: 3, max: 50 }).trim(),
+router.post('/register', [  body('username').isLength({ min: 3, max: 50 }).trim(),
   body('email').isEmail().normalizeEmail(),
   body('password').isLength({ min: 6 }),
   body('fullName').optional().isLength({ max: 255 }).trim()
-], async (req, res, next) => {
+], async (req: Request, res: Response, next: NextFunction) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -56,10 +55,9 @@ router.post('/register', [
 });
 
 // Login
-router.post('/login', [
-  body('username').trim(),
+router.post('/login', [  body('username').trim(),
   body('password').exists()
-], async (req, res, next) => {
+], async (req: Request, res: Response, next: NextFunction) => {
   try {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
