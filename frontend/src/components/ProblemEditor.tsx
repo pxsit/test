@@ -25,11 +25,11 @@ const ProblemEditor: React.FC = () => {
     outputFormat: '',
     notes: ''
   });
-
   useEffect(() => {
     if (!isCreate && id) {
       loadProblem(parseInt(id));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isCreate]);
 
   const loadProblem = async (problemId: number) => {

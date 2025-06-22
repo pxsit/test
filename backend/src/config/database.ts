@@ -10,6 +10,10 @@ const pool = new Pool({
 
 export async function initDatabase() {
   try {
+    // Test database connection first
+    await pool.query('SELECT NOW()');
+    console.log('Database connected successfully');
+    
     // Create users table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS users (

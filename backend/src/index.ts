@@ -45,10 +45,24 @@ async function startServer() {
     
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
+      console.log(`Frontend should be available at http://localhost:3000`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);
-    process.exit(1);
+    console.log('\n⚠️  Database connection failed. Please check:');
+    console.log('1. PostgreSQL is installed and running');
+    console.log('2. Database credentials in backend/.env are correct');
+    console.log('3. Database "polyhedron" exists');
+    console.log('\nTo create the database, run:');
+    console.log('createdb polyhedron');
+    console.log('psql -d polyhedron -f backend/database/init.sql\n');
+    
+    // Start server without database for development
+    console.log('Starting server without database connection...');
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT} (without database)`);
+      console.log(`Frontend available at http://localhost:3000`);
+    });
   }
 }
 
