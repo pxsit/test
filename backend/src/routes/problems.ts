@@ -6,14 +6,14 @@ import archiver from 'archiver';
 import { v4 as uuidv4 } from 'uuid';
 import { body, validationResult } from 'express-validator';
 import { pool } from '../config/database';
-import { authenticateToken } from '../middleware/auth';
+import { authenticateToken, AuthRequest } from '../middleware/auth';
 import { CreateProblemRequest, UpdateProblemRequest } from '../types';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 const router = express.Router();
-
-interface AuthRequest extends Request {
-  userId?: number;
-}
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -297,6 +297,369 @@ router.get('/:id/export', authenticateToken, async (req: AuthRequest, res: Respo
   }
 });
 
+// Generate test cases
+router.post('/:id/generate-test-cases', authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const problemId = parseInt(req.params.id);
+
+    // Check if problem exists and belongs to user
+    const problemResult = await pool.query(
+      'SELECT * FROM problems WHERE id = $1 AND author_id = $2',
+      [problemId, req.userId]
+    );
+
+    if (problemResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Problem not found' });
+    }
+
+    const problem = problemResult.rows[0];
+
+    // Run the generator
+    const generatorFile = await pool.query(
+      'SELECT * FROM problem_files WHERE problem_id = $1 AND file_type = $2',
+      [problemId, 'generator']
+    );
+
+    if (generatorFile.rows.length === 0) {
+      return res.status(400).json({ error: 'No generator file found' });
+    }
+
+    const generatorPath = generatorFile.rows[0].file_path;
+
+    // Execute the generator
+    const { stdout, stderr } = await execAsync(`python3 ${generatorPath} ${problemId}`, { cwd: process.cwd() });
+
+    if (stderr) {
+      return res.status(500).json({ error: 'Error running generator: ' + stderr });
+    }
+
+    // Parse and save test cases
+    const testCases = JSON.parse(stdout);
+
+    for (const testCase of testCases) {
+      await pool.query(
+        'INSERT INTO test_cases (problem_id, input, output) VALUES ($1, $2, $3)',
+        [problemId, testCase.input, testCase.output]
+      );
+    }
+
+    res.status(201).json({ message: 'Test cases generated successfully', testCases });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Run all test cases for a problem
+router.post('/:id/run-test-cases', authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const problemId = parseInt(req.params.id);
+
+    // Check if problem exists and belongs to user
+    const problemResult = await pool.query(
+      'SELECT * FROM problems WHERE id = $1 AND author_id = $2',
+      [problemId, req.userId]
+    );
+
+    if (problemResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Problem not found' });
+    }
+
+    // Get test cases
+    const testCasesResult = await pool.query(
+      'SELECT * FROM test_cases WHERE problem_id = $1',
+      [problemId]
+    );
+
+    if (testCasesResult.rows.length === 0) {
+      return res.status(404).json({ error: 'No test cases found' });
+    }
+
+    const testCases = testCasesResult.rows;
+
+    // TODO: Implement test case running logic (e.g., compile solution, run against test cases, return results)
+
+    res.json({ message: 'Test cases run successfully', testCases });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Generate test cases using generator
+router.post('/:id/generate-tests', authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const { generatorFile, testCount = 5, groupName = 'main' } = req.body;
+
+    // Check if problem exists and belongs to user
+    const problemResult = await pool.query(
+      'SELECT * FROM problems WHERE id = $1 AND author_id = $2',
+      [id, req.userId]
+    );
+
+    if (problemResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Problem not found' });
+    }
+
+    const problem = problemResult.rows[0];
+
+    // Get generator file
+    const generatorResult = await pool.query(
+      'SELECT * FROM problem_files WHERE problem_id = $1 AND file_type = $2 AND filename = $3',
+      [id, 'generator', generatorFile]
+    );
+
+    if (generatorResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Generator file not found' });
+    }
+
+    const generator = generatorResult.rows[0];
+    const generatorPath = generator.file_path;
+
+    // Create or get test group
+    let testGroupResult = await pool.query(
+      'SELECT * FROM test_groups WHERE problem_id = $1 AND name = $2',
+      [id, groupName]
+    );
+
+    let testGroupId;
+    if (testGroupResult.rows.length === 0) {
+      const insertGroupResult = await pool.query(
+        'INSERT INTO test_groups (problem_id, name, points) VALUES ($1, $2, $3) RETURNING id',
+        [id, groupName, 100]
+      );
+      testGroupId = insertGroupResult.rows[0].id;
+    } else {
+      testGroupId = testGroupResult.rows[0].id;
+    }    // Compile generator if it's C++
+    if (path.extname(generatorPath) === '.cpp') {
+      const compiledPath = generatorPath.replace('.cpp', '.exe');
+      try {
+        // Check if g++ is available
+        await execAsync('g++ --version');
+        await execAsync(`g++ "${generatorPath}" -o "${compiledPath}" -std=c++17`);
+      } catch (error) {
+        console.error('Compilation error:', error);
+        return res.status(400).json({ 
+          error: 'Failed to compile generator. Make sure g++ is installed and accessible.', 
+          details: error 
+        });
+      }
+    }
+
+    // Generate test cases
+    const generatedTests = [];
+    for (let i = 1; i <= testCount; i++) {
+      try {
+        let command;
+        if (path.extname(generatorPath) === '.cpp') {
+          const compiledPath = generatorPath.replace('.cpp', '.exe');
+          command = `"${compiledPath}" ${i}`;        } else if (path.extname(generatorPath) === '.py') {
+          try {
+            // Check if python is available
+            await execAsync('python --version');
+            command = `python "${generatorPath}" ${i}`;
+          } catch (error) {
+            console.error('Python not found, trying python3:', error);
+            try {
+              await execAsync('python3 --version');
+              command = `python3 "${generatorPath}" ${i}`;
+            } catch (error2) {
+              return res.status(400).json({ 
+                error: 'Python is not installed or not accessible. Please install Python and make sure it\'s in your PATH.' 
+              });
+            }
+          }
+        } else {
+          return res.status(400).json({ error: 'Unsupported generator file type' });
+        }
+
+        const { stdout } = await execAsync(command);
+        const input = stdout.trim();
+
+        // Save test case to database
+        const testResult = await pool.query(
+          'INSERT INTO test_cases (problem_id, test_group_id, test_index, input_data, output_data) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+          [id, testGroupId, i, input, ''] // Output will be generated later by running the solution
+        );
+
+        generatedTests.push(testResult.rows[0]);
+      } catch (error) {
+        console.error(`Failed to generate test case ${i}:`, error);
+      }
+    }
+
+    res.json({ 
+      message: 'Test cases generated successfully', 
+      testCases: generatedTests,
+      testGroupId 
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Get test cases for a problem
+router.get('/:id/tests', authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+
+    // Check if problem exists and belongs to user
+    const problemResult = await pool.query(
+      'SELECT * FROM problems WHERE id = $1 AND author_id = $2',
+      [id, req.userId]
+    );
+
+    if (problemResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Problem not found' });
+    }
+
+    // Get test groups
+    const groupsResult = await pool.query(
+      'SELECT * FROM test_groups WHERE problem_id = $1 ORDER BY id',
+      [id]
+    );
+
+    // Get test cases
+    const casesResult = await pool.query(
+      'SELECT * FROM test_cases WHERE problem_id = $1 ORDER BY test_group_id, test_index',
+      [id]
+    );
+
+    res.json({
+      testGroups: groupsResult.rows,
+      testCases: casesResult.rows
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Delete test case
+router.delete('/:id/tests/:testId', authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id, testId } = req.params;
+
+    // Check if problem exists and belongs to user
+    const problemResult = await pool.query(
+      'SELECT * FROM problems WHERE id = $1 AND author_id = $2',
+      [id, req.userId]
+    );
+
+    if (problemResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Problem not found' });
+    }
+
+    // Delete test case
+    await pool.query(
+      'DELETE FROM test_cases WHERE id = $1 AND problem_id = $2',
+      [testId, id]
+    );
+
+    res.json({ message: 'Test case deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Run solution against test cases to generate expected outputs
+router.post('/:id/generate-outputs', authenticateToken, async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const { solutionFile } = req.body;
+
+    // Check if problem exists and belongs to user
+    const problemResult = await pool.query(
+      'SELECT * FROM problems WHERE id = $1 AND author_id = $2',
+      [id, req.userId]
+    );
+
+    if (problemResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Problem not found' });
+    }
+
+    // Get solution file
+    const solutionResult = await pool.query(
+      'SELECT * FROM problem_files WHERE problem_id = $1 AND file_type = $2 AND filename = $3',
+      [id, 'solution', solutionFile]
+    );
+
+    if (solutionResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Solution file not found' });
+    }
+
+    const solution = solutionResult.rows[0];
+    const solutionPath = solution.file_path;    // Compile solution if it's C++
+    if (path.extname(solutionPath) === '.cpp') {
+      const compiledPath = solutionPath.replace('.cpp', '.exe');
+      try {
+        // Check if g++ is available
+        await execAsync('g++ --version');
+        await execAsync(`g++ "${solutionPath}" -o "${compiledPath}" -std=c++17`);
+      } catch (error) {
+        console.error('Compilation error:', error);
+        return res.status(400).json({ 
+          error: 'Failed to compile solution. Make sure g++ is installed and accessible.', 
+          details: error 
+        });
+      }
+    }
+
+    // Get all test cases for this problem
+    const testCasesResult = await pool.query(
+      'SELECT * FROM test_cases WHERE problem_id = $1 ORDER BY test_group_id, test_index',
+      [id]
+    );
+
+    const updatedTestCases = [];
+    
+    for (const testCase of testCasesResult.rows) {
+      try {
+        let command;
+        if (path.extname(solutionPath) === '.cpp') {
+          const compiledPath = solutionPath.replace('.cpp', '.exe');
+          command = `echo "${testCase.input_data}" | "${compiledPath}"`;        } else if (path.extname(solutionPath) === '.py') {
+          try {
+            // Check if python is available
+            await execAsync('python --version');
+            command = `echo "${testCase.input_data}" | python "${solutionPath}"`;
+          } catch (error) {
+            console.error('Python not found, trying python3:', error);
+            try {
+              await execAsync('python3 --version');
+              command = `echo "${testCase.input_data}" | python3 "${solutionPath}"`;
+            } catch (error2) {
+              console.error('Python not available for solution:', error2);
+              continue; // Skip this test case
+            }
+          }
+        } else {
+          continue; // Skip unsupported file types
+        }
+
+        const { stdout } = await execAsync(command);
+        const output = stdout.trim();
+
+        // Update test case with generated output
+        const updateResult = await pool.query(
+          'UPDATE test_cases SET output_data = $1 WHERE id = $2 RETURNING *',
+          [output, testCase.id]
+        );
+
+        updatedTestCases.push(updateResult.rows[0]);
+      } catch (error) {
+        console.error(`Failed to generate output for test case ${testCase.id}:`, error);
+      }
+    }
+
+    res.json({ 
+      message: 'Outputs generated successfully', 
+      testCases: updatedTestCases 
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Helper function to generate problem.xml
 function generateProblemXml(problem: any): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -333,7 +696,7 @@ async function createZipArchive(sourceDir: string, outputPath: string): Promise<
     const archive = archiver('zip', { zlib: { level: 9 } });
 
     output.on('close', () => resolve());
-    archive.on('error', (err) => reject(err));
+    archive.on('error', (err: Error) => reject(err));
 
     archive.pipe(output);
     archive.directory(sourceDir, false);

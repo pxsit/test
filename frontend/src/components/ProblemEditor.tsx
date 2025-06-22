@@ -261,12 +261,11 @@ const ProblemEditor: React.FC = () => {
 
               {activeTab === 'files' && (
                 <FileManager files={files} onFileUpload={handleFileUpload} />
-              )}
-
-              {activeTab === 'tests' && (
-                <div className="text-center py-8 text-gray-500">
-                  Test management functionality coming soon...
-                </div>
+              )}              {activeTab === 'tests' && id && !isCreate && (
+                <TestManager 
+                  problemId={parseInt(id)} 
+                  files={files}
+                />
               )}
             </div>
           </div>
@@ -379,6 +378,327 @@ const FileManager: React.FC<FileManagerProps> = ({ files, onFileUpload }) => {
           </div>
         )
       ))}
+    </div>
+  );
+};
+
+interface TestManagerProps {
+  problemId: number;
+  files: ProblemFile[];
+}
+
+interface TestCase {
+  id: number;
+  testGroupId: number;
+  testIndex: number;
+  inputData: string;
+  outputData: string;
+}
+
+interface TestGroup {
+  id: number;
+  problemId: number;
+  name: string;
+  points: number;
+}
+
+const TestManager: React.FC<TestManagerProps> = ({ problemId, files }) => {
+  const [testGroups, setTestGroups] = useState<TestGroup[]>([]);
+  const [testCases, setTestCases] = useState<TestCase[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [selectedGenerator, setSelectedGenerator] = useState('');
+  const [selectedSolution, setSelectedSolution] = useState('');
+  const [testCount, setTestCount] = useState(5);
+  const [groupName, setGroupName] = useState('main');
+
+  const generatorFiles = files.filter(f => f.fileType === 'generator');
+  const solutionFiles = files.filter(f => f.fileType === 'solution');
+
+  useEffect(() => {
+    loadTests();
+  }, [problemId]);
+
+  const loadTests = async () => {
+    try {
+      setIsLoading(true);
+      const response = await fetch(`/api/problems/${problemId}/tests`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setTestGroups(data.testGroups);
+        setTestCases(data.testCases);
+      }
+    } catch (error) {
+      console.error('Failed to load tests:', error);
+      toast.error('Failed to load test cases');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const generateTests = async () => {
+    if (!selectedGenerator) {
+      toast.error('Please select a generator file');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const response = await fetch(`/api/problems/${problemId}/generate-tests`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          generatorFile: selectedGenerator,
+          testCount,
+          groupName
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        toast.success(data.message);
+        loadTests();
+      } else {
+        const error = await response.json();
+        toast.error(error.error || 'Failed to generate tests');
+      }
+    } catch (error) {
+      console.error('Failed to generate tests:', error);
+      toast.error('Failed to generate test cases');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const generateOutputs = async () => {
+    if (!selectedSolution) {
+      toast.error('Please select a solution file');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const response = await fetch(`/api/problems/${problemId}/generate-outputs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          solutionFile: selectedSolution
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        toast.success(data.message);
+        loadTests();
+      } else {
+        const error = await response.json();
+        toast.error(error.error || 'Failed to generate outputs');
+      }
+    } catch (error) {
+      console.error('Failed to generate outputs:', error);
+      toast.error('Failed to generate outputs');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const deleteTestCase = async (testId: number) => {
+    try {
+      const response = await fetch(`/api/problems/${problemId}/tests/${testId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+
+      if (response.ok) {
+        toast.success('Test case deleted');
+        loadTests();
+      } else {
+        toast.error('Failed to delete test case');
+      }
+    } catch (error) {
+      console.error('Failed to delete test case:', error);
+      toast.error('Failed to delete test case');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Test Generation Controls */}
+      <div className="bg-gray-50 p-6 rounded-lg">
+        <h3 className="text-lg font-medium mb-4">Generate Test Cases</h3>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Generator File
+            </label>
+            <select
+              value={selectedGenerator}
+              onChange={(e) => setSelectedGenerator(e.target.value)}
+              className="w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Select generator...</option>
+              {generatorFiles.map(file => (
+                <option key={file.id} value={file.fileName}>
+                  {file.fileName} ({file.language})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Solution File (for outputs)
+            </label>
+            <select
+              value={selectedSolution}
+              onChange={(e) => setSelectedSolution(e.target.value)}
+              className="w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="">Select solution...</option>
+              {solutionFiles.map(file => (
+                <option key={file.id} value={file.fileName}>
+                  {file.fileName} ({file.language})
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Test Count
+            </label>
+            <input
+              type="number"
+              value={testCount}
+              onChange={(e) => setTestCount(parseInt(e.target.value))}
+              min="1"
+              max="100"
+              className="w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Group Name
+            </label>
+            <input
+              type="text"
+              value={groupName}
+              onChange={(e) => setGroupName(e.target.value)}
+              className="w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div className="flex items-end space-x-2">
+            <button
+              onClick={generateTests}
+              disabled={isLoading || !selectedGenerator}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+            >
+              Generate Tests
+            </button>
+            <button
+              onClick={generateOutputs}
+              disabled={isLoading || !selectedSolution}
+              className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50"
+            >
+              Generate Outputs
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Test Cases Display */}
+      <div>
+        <h3 className="text-lg font-medium mb-4">Test Cases</h3>
+        
+        {isLoading && (
+          <div className="text-center py-4">
+            <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+          </div>
+        )}
+
+        {testGroups.map(group => {
+          const groupTests = testCases.filter(tc => tc.testGroupId === group.id);
+          
+          return (
+            <div key={group.id} className="mb-6">
+              <h4 className="font-medium text-gray-900 mb-3">
+                Group: {group.name} ({groupTests.length} tests)
+              </h4>
+              
+              <div className="space-y-3">
+                {groupTests.map(testCase => (
+                  <div key={testCase.id} className="border rounded-lg p-4 bg-white">
+                    <div className="flex justify-between items-start mb-3">
+                      <h5 className="font-medium">Test {testCase.testIndex}</h5>
+                      <button
+                        onClick={() => deleteTestCase(testCase.id)}
+                        className="text-red-600 hover:text-red-800 text-sm"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Input
+                        </label>
+                        <textarea
+                          value={testCase.inputData}
+                          readOnly
+                          rows={4}
+                          className="w-full border-gray-300 rounded-md shadow-sm bg-gray-50"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Expected Output
+                        </label>
+                        <textarea
+                          value={testCase.outputData}
+                          readOnly
+                          rows={4}
+                          className="w-full border-gray-300 rounded-md shadow-sm bg-gray-50"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              {groupTests.length === 0 && (
+                <div className="text-gray-500 text-center py-4">
+                  No test cases in this group
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {testGroups.length === 0 && !isLoading && (
+          <div className="text-gray-500 text-center py-8">
+            No test cases generated yet. Use the controls above to generate test cases.
+          </div>
+        )}
+      </div>
     </div>
   );
 };
