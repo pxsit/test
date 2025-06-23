@@ -1,0 +1,27 @@
+[
+  {
+    "test_index": 1,
+    "input_data": "18 73",
+    "output_data": "91"
+  },
+  {
+    "test_index": 2,
+    "input_data": "8 12",
+    "output_data": "20"
+  },
+  {
+    "test_index": 3,
+    "input_data": "31 76",
+    "output_data": "107"
+  },
+  {
+    "test_index": 4,
+    "input_data": "31 39",
+    "output_data": "70"
+  },
+  {
+    "test_index": 5,
+    "input_data": "80 33",
+    "output_data": "113"
+  }
+]

@@ -408,6 +408,8 @@ router.post('/:id/generate-tests', authenticateToken, async (req: AuthRequest, r
     const { id } = req.params;
     const { generatorFile, testCount = 5, groupName = 'main' } = req.body;
 
+    console.log('Generate tests request:', { id, generatorFile, testCount, groupName });
+
     // Check if problem exists and belongs to user
     const problemResult = await pool.query(
       'SELECT * FROM problems WHERE id = $1 AND author_id = $2',
@@ -419,12 +421,16 @@ router.post('/:id/generate-tests', authenticateToken, async (req: AuthRequest, r
     }
 
     const problem = problemResult.rows[0];
+    console.log('Found problem:', problem.name);
 
     // Get generator file
+    console.log('Looking for generator file:', generatorFile);
     const generatorResult = await pool.query(
-      'SELECT * FROM problem_files WHERE problem_id = $1 AND file_type = $2 AND filename = $3',
+      'SELECT * FROM problem_files WHERE problem_id = $1 AND file_type = $2 AND file_name = $3',
       [id, 'generator', generatorFile]
     );
+
+    console.log('Generator query result:', generatorResult.rows);
 
     if (generatorResult.rows.length === 0) {
       return res.status(404).json({ error: 'Generator file not found' });
@@ -597,7 +603,7 @@ router.post('/:id/generate-outputs', authenticateToken, async (req: AuthRequest,
 
     // Get solution file
     const solutionResult = await pool.query(
-      'SELECT * FROM problem_files WHERE problem_id = $1 AND file_type = $2 AND filename = $3',
+      'SELECT * FROM problem_files WHERE problem_id = $1 AND file_type = $2 AND file_name = $3',
       [id, 'solution', solutionFile]
     );
 
