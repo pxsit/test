@@ -82,19 +82,26 @@ router.get('/:id', authenticateToken, async (req: AuthRequest, res: Response, ne
     const casesResult = await pool.query(
       'SELECT * FROM test_cases WHERE problem_id = $1 ORDER BY id',
       [problemId]
-    );
-
-    // Get problem files
+    );    // Get problem files
     const filesResult = await pool.query(
       'SELECT * FROM problem_files WHERE problem_id = $1 ORDER BY file_type, id',
       [problemId]
-    );
+    );    // Convert file fields to camelCase for frontend
+    const files = filesResult.rows.map((file: any) => ({
+      id: file.id,
+      problemId: file.problem_id,
+      fileType: file.file_type,
+      fileName: file.file_name,
+      filePath: file.file_path,
+      language: file.language,
+      createdAt: file.created_at
+    }));
 
     res.json({
       problem,
       testGroups: groupsResult.rows,
       testCases: casesResult.rows,
-      files: filesResult.rows
+      files
     });
   } catch (error) {
     next(error);
@@ -136,13 +143,18 @@ router.put('/:id', authenticateToken, [
   body('memoryLimit').optional().isInt({ min: 64, max: 1024 })
 ], async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
+    console.log('Update request body:', req.body);
+    
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return res.status(400).json({ errors: errors.array() });
+      console.log('Validation errors:', errors.array());
+      return res.status(400).json({ error: 'Validation failed', details: errors.array() });
     }
 
     const problemId = parseInt(req.params.id);
     const updates = req.body;
+
+    console.log('Problem ID:', problemId, 'User ID:', req.userId);
 
     // Check if problem exists and belongs to user
     const checkResult = await pool.query(
@@ -160,25 +172,31 @@ router.put('/:id', authenticateToken, [
     let paramCount = 1;
 
     for (const [key, value] of Object.entries(updates)) {
-      if (value !== undefined) {
-        updateFields.push(`${key.replace(/([A-Z])/g, '_$1').toLowerCase()} = $${paramCount}`);
+      if (value !== undefined && value !== null && value !== '') {
+        const dbField = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+        updateFields.push(`${dbField} = $${paramCount}`);
         values.push(value);
         paramCount++;
+        console.log(`Mapping ${key} -> ${dbField} = ${value}`);
       }
     }
 
     if (updateFields.length === 0) {
-      return res.status(400).json({ error: 'No fields to update' });
+      return res.status(400).json({ error: 'No valid fields to update' });
     }
 
     updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
     values.push(problemId);
 
     const query = `UPDATE problems SET ${updateFields.join(', ')} WHERE id = $${paramCount} RETURNING *`;
+    console.log('Update query:', query);
+    console.log('Values:', values);
+    
     const result = await pool.query(query, values);
 
     res.json({ problem: result.rows[0] });
   } catch (error) {
+    console.error('Update error:', error);
     next(error);
   }
 });

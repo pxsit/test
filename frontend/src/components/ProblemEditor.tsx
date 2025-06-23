@@ -54,19 +54,31 @@ const ProblemEditor: React.FC = () => {
       setIsLoading(false);
     }
   };
-
   const handleSave = async () => {
     try {
+      console.log('Saving problem with data:', formData);
+      
       if (isCreate) {
         const response = await problemsAPI.create(formData);
         toast.success('Problem created successfully');
         navigate(`/problems/${response.problem.id}`);
       } else if (problem) {
-        await problemsAPI.update(problem.id, formData);
+        const response = await problemsAPI.update(problem.id, formData);
+        console.log('Update response:', response);
         toast.success('Problem updated successfully');
       }
     } catch (error: any) {
-      toast.error(error.response?.data?.error || 'Failed to save problem');
+      console.error('Save error:', error);
+      console.error('Error response:', error.response?.data);
+      
+      if (error.response?.data?.details) {
+        // Show validation errors
+        const details = error.response.data.details;
+        const messages = details.map((d: any) => `${d.path}: ${d.msg}`).join(', ');
+        toast.error(`Validation errors: ${messages}`);
+      } else {
+        toast.error(error.response?.data?.error || 'Failed to save problem');
+      }
     }
   };
 

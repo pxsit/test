@@ -5,7 +5,7 @@ export interface AuthRequest extends Request {
   userId?: number;
 }
 
-export function authenticateToken(req: AuthRequest, res: Response, next: NextFunction) {
+export function authenticateToken(req: Request & { userId?: number }, res: Response, next: NextFunction) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
